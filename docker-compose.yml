@@ -1,0 +1,159 @@
+services:
+  # ⚡ In-Memory Cache Cluster Layer
+  redis:
+    image: redis:7-alpine
+    container_name: cinepass-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - cinepass-network
+
+  # 🎛️ Async Event Bus Broker Engine
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: cinepass-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=admin
+      - RABBITMQ_DEFAULT_PASS=admin123
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cinepass-network
+
+  # 🔑 Standalone Authentication Gateway Service
+  auth-service:
+    build: ./services/auth-service
+    container_name: cinepass-auth-service
+    ports:
+      - "5001:5001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - PORT=5001
+      - DB_HOST=host.docker.internal
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=Lakisha@1997
+      - DB_NAME=auth_db
+    networks:
+      - cinepass-network
+
+  # 🎟️ Core Seating Allocation & Booking Microservice
+  booking-service:
+    build: ./services/booking-service
+    container_name: cinepass-booking-service
+    ports:
+      - "5003:5003"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - PORT=5003
+      - DB_HOST=host.docker.internal
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=Lakisha@1997
+      - DB_NAME=booking_db
+      - REDIS_HOST=redis
+      - RABBITMQ_HOST=rabbitmq
+    depends_on:
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - cinepass-network
+
+  # 🎬 Movie Catalog Microservice
+  movie-service:
+    build: ./services/movie-service
+    container_name: cinepass-movie-service
+    ports:
+      - "5002:5002"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - PORT=5002
+      - DB_HOST=host.docker.internal
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=Lakisha@1997
+      - DB_NAME=movie_db
+    networks:
+      - cinepass-network
+
+  # 📢 Async Notification Microservice
+  notification-service:
+    build: ./services/notification-service
+    container_name: cinepass-notification-service
+    ports:
+      - "5006:5006"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "localhost:host-gateway"
+      - "127.0.0.1:host-gateway"
+    environment:
+      - PORT=5006
+      - DB_HOST=host.docker.internal
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=Lakisha@1997
+      - DB_NAME=booking_db
+      - RABBITMQ_HOST=rabbitmq
+      - AMQP_URL=amqp://admin:admin123@rabbitmq:5672
+    restart: on-failure # 🔄 Auto-reboot container if it beats RabbitMQ to port readiness
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - cinepass-network
+
+  # 💳 Payment Gateway Proxy Service
+  payment-service:
+    build: ./services/payment-service
+    container_name: cinepass-payment-service
+    ports:
+      - "5005:5005"
+    networks:
+      - cinepass-network
+
+  # 🧠 AI Recommendation Engine
+  recommendation-service:
+    build: ./services/recommendation-service
+    container_name: cinepass-recommendation-service
+    ports:
+      - "5008:5008"
+    volumes:
+      - /usr/src/app/venv
+    environment:
+      - PORT=5008
+      - REDIS_HOST=redis
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      redis:
+        condition: service_started
+    networks:
+      - cinepass-network
+
+  # 💻 Frontend Client React Interface
+  frontend:
+    build: ./frontend
+    container_name: cinepass-frontend
+    ports:
+      - "5174:5174"
+    depends_on:
+      - auth-service
+      - booking-service
+      - movie-service
+      - recommendation-service
+    networks:
+      - cinepass-network
+
+networks:
+  cinepass-network:
+    driver: bridge

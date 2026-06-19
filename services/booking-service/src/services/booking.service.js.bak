@@ -1,0 +1,111 @@
+const redisClient =
+    require("../config/redis");
+
+const pool =
+    require("../config/db");
+
+const {
+    getChannel
+} = require("../config/rabbitmq");
+
+const lockSeatService = async ({
+    showId,
+    seatNumber
+}) => {
+
+    const key =
+        `seat:${showId}:${seatNumber}`;
+
+    const existing =
+        await redisClient.get(key);
+
+    if (existing) {
+
+        throw new Error(
+            "Seat already locked"
+        );
+
+    }
+
+    await redisClient.set(
+        key,
+        "locked",
+        {
+            EX: 300
+        }
+    );
+
+    return {
+        message:
+            "Seat locked successfully",
+        seatNumber
+    };
+};
+
+const confirmBookingService =
+    async ({
+        userId,
+        showId,
+        seatNumber
+    }) => {
+
+        const key =
+            `seat:${showId}:${seatNumber}`;
+
+        const lock =
+            await redisClient.get(key);
+
+        if (!lock) {
+
+            throw new Error(
+                "Seat lock expired"
+            );
+
+        }
+
+        const booking =
+            await pool.query(
+                `
+                INSERT INTO bookings
+                (
+                    user_id,
+                    show_id,
+                    total_amount,
+                    booking_status
+                )
+                VALUES
+                ($1,$2,$3,$4)
+                RETURNING *
+                `,
+                [
+                    userId,
+                    showId,
+                    500,
+                    "confirmed"
+                ]
+            );
+
+        const channel =
+            getChannel();
+
+        channel.sendToQueue(
+            "booking.created",
+            Buffer.from(
+                JSON.stringify(
+                    booking.rows[0]
+                )
+            )
+        );
+
+        return {
+            message:
+                "Booking Confirmed",
+            booking:
+                booking.rows[0]
+        };
+    };
+
+module.exports = {
+    lockSeatService,
+    confirmBookingService
+};
